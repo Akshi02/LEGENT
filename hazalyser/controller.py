@@ -43,7 +43,7 @@ class Controller:
             "#SPACING+": self._increase_spacing,
             "#SPACING-": self._decrease_spacing,
             "#FWANALYSE": self._fw_analyse,
-            "#MTANALYSE": self._mt_analyse
+            "#MTANALYSE": self._mt_analyse #IMPLEMENT the hazard methodologies for analysis.
 
         }
     
