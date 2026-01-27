@@ -829,7 +829,7 @@ class Controller:
                     # new scene + lock
                     self._new_scene(env)
                     self._lock_scene(env, action)
-
+                    '''
                     # CLUTTER MAX: keep adding until saturated (instance count stops increasing)
                     for _ in range(max_clutter_steps):
                         before_n = len(self._locked_scene_bundle.infos["instances"])
@@ -837,7 +837,7 @@ class Controller:
                         after_n = len(self._locked_scene_bundle.infos["instances"])
                         if after_n <= before_n:
                             break
-
+                    '''            
                     # Save 4 side images only
                     folder_name = f"{rt}_{i:02d}"
                     save_folder, image_paths = self._save_perspectives(
