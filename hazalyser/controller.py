@@ -691,6 +691,62 @@ class Controller:
 
         return (old_x_cells, old_z_cells, new_x_cells, new_z_cells)
 
+    def _save_perspectives(
+        self,
+        env: Environment,
+        action: Action = Action(),
+        camera_height=1.7,
+        width=4096,
+        height=4096,
+        vertical_field_of_view=60,
+        include_top: bool = True,      # NEW
+        out_root: str = None,          # NEW
+        folder_name: str = None,       # NEW
+    ):
+        scene_info = self._locked_scene_bundle.infos
+        room_type = scene_info["room_polygon"][0]["room_type"]
+
+        # root output dir
+        base_root = out_root if out_root else os.path.join(LLM_ANALYSIS_PATH, self.scene_config.analysis_folder)
+
+        # folder naming
+        if folder_name is None:
+            timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
+            folder_name = f"{room_type}_{timestamp}"
+
+        # IMPORTANT: save inside room folder
+        save_folder = os.path.join(base_root, room_type, folder_name)
+        os.makedirs(save_folder, exist_ok=True)
+
+        action.text = ""
+        min_x, min_z, max_x, max_z = self._locked_scene_bundle.generator.placer.bbox
+        image_paths = []
+
+        if include_top:
+            top_view_path = f"{save_folder}/top.png"
+            action.api_calls = [SaveTopDownView(top_view_path)]
+            env.step(action)
+            image_paths.append(top_view_path)
+
+        rotations = [[0, 0, 0], [0, 90, 0], [0, 180, 0], [0, 270, 0]]
+        positions = [
+            [(max_x - min_x) / 2, camera_height, 0],
+            [0, camera_height, (max_z - min_z) / 2],
+            [(max_x - min_x) / 2, camera_height, max_z],
+            [max_x, camera_height, (max_z - min_z) / 2],
+        ]
+
+        for i, (pos, rot) in enumerate(zip(positions, rotations)):
+            side_view_path = f"{save_folder}/side_{i}.png"
+            action.api_calls = [TakePhoto(side_view_path, pos, rot, width, height, vertical_field_of_view)]
+            env.step(action)
+            image_paths.append(side_view_path)
+
+        action.api_calls = []
+        return save_folder, image_paths
+
+
+    '''
     def _save_perspectives(self, env: Environment, action: Action = Action(),
                         camera_height=1.7, width=4096, height=4096, vertical_field_of_view=60):
         """ Take snapshots from different perspectives """
@@ -733,6 +789,88 @@ class Controller:
             image_paths = image_paths[:1]
 
         return save_folder, image_paths
+    '''
+
+    def generate_4room_dataset(
+        self,
+        out_root: str,
+        per_room_folders: int = 10,
+        env_path: str = "auto",
+        width: int = 1024,
+        height: int = 1024,
+        vfov: int = 60,
+        camera_height: float = 1.7,
+        max_clutter_steps: int = 80,
+    ):
+        """
+        Creates:
+        out_root/Bedroom/Bedroom_00/side_0..3.png
+        out_root/LivingRoom/LivingRoom_00/side_0..3.png
+        out_root/Kitchen/Kitchen_00/side_0..3.png
+        out_root/Bathroom/Bathroom_00/side_0..3.png
+
+        10 folders per room => 40 side images per room.
+        Top view disabled. Clutter max. Spacing min.
+        """
+
+        room_types = ["Bedroom", "LivingRoom", "Kitchen", "Bathroom"]
+        env = Environment(env_path=env_path)
+        action = Action()
+
+        try:
+            for rt in room_types:
+                # Force room type
+                self.scene_config.room_spec.spec.room_type = rt
+
+                # SPACING MIN: generate smallest room immediately (3x3)
+                self.scene_config.dims = (3, 3)
+
+                for i in range(per_room_folders):
+                    # new scene + lock
+                    self._new_scene(env)
+                    self._lock_scene(env, action)
+
+                    # CLUTTER MAX: keep adding until saturated (instance count stops increasing)
+                    for _ in range(max_clutter_steps):
+                        before_n = len(self._locked_scene_bundle.infos["instances"])
+                        self._increase_clutter(env, action)
+                        after_n = len(self._locked_scene_bundle.infos["instances"])
+                        if after_n <= before_n:
+                            break
+
+                    # Save 4 side images only
+                    folder_name = f"{rt}_{i:02d}"
+                    save_folder, image_paths = self._save_perspectives(
+                        env,
+                        action=Action(),
+                        camera_height=camera_height,
+                        width=width,
+                        height=height,
+                        vertical_field_of_view=vfov,
+                        include_top=False,      # DISABLE TOP VIEW
+                        out_root=out_root,      # ROOT OUTPUT
+                        folder_name=folder_name # EXACT 10 folders
+                    )
+
+                    # Save scene.json for each folder (recommended)
+                    import json
+                    from hazalyser.helpers import get_current_scene_state, update_position_and_rotation
+
+                    current_state = get_current_scene_state(env, Action())
+                    update_position_and_rotation(self._locked_scene_bundle.infos, current_state)
+
+                    with open(os.path.join(save_folder, "scene.json"), "w", encoding="utf-8") as f:
+                        json.dump(self._locked_scene_bundle.infos, f, ensure_ascii=False, indent=2)
+
+                    # unlock
+                    self._unlock_scene(env, action)
+
+                    action.text = f"Saved {rt} [{i+1}/{per_room_folders}] -> {save_folder}"
+                    env.step(action)
+
+        finally:
+            env.close()
+
 
     def _fw_analyse(self, env: Environment, action: Action) -> None:
         # save all images for reference
