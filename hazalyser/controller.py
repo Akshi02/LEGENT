@@ -898,6 +898,8 @@ class Controller:
                             self._lock_scene(env, action)
 
                             # --- clutter category ---
+                            print("Applying clutter:", clutter_cat)
+
                             if clutter_cat == "high_clutter":
                                 self._apply_clutter_category(env, clutter_cat, steps=clutter_steps_high)
                             elif clutter_cat == "low_clutter":
