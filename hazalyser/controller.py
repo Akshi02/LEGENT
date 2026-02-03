@@ -820,6 +820,38 @@ class Controller:
         # fallback
         return (3, 3)
     
+
+    def _apply_clutter_category(self, env: Environment, category: str, steps: int = 3):
+        """
+        Apply a clutter category by calling increase/decrease clutter
+        a fixed number of times.
+
+        category: 'high_clutter' | 'medium_clutter' | 'low_clutter'
+        """
+        category = category.lower().strip()
+        action = Action()
+
+        # medium clutter = baseline scene
+        if category == "medium_clutter":
+            return
+
+        if category == "high_clutter":
+            for _ in range(steps):
+                try:
+                    self._increase_clutter(env, action)
+                except Exception:
+                    break
+            return
+
+        if category == "low_clutter":
+            for _ in range(steps):
+                try:
+                    self._decrease_clutter(env, action)
+                except Exception:
+                    break
+            return
+
+
     def generate_4room_dataset_by_clutter_and_spacing(
         self,
         out_root: str,
