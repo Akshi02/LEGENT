@@ -820,7 +820,7 @@ class Controller:
         # fallback
         return (3, 3)
     
-
+    '''
     def _apply_clutter_category(self, env: Environment, category: str, steps: int = 3):
         """
         Apply a clutter category by calling increase/decrease clutter
@@ -850,98 +850,56 @@ class Controller:
                 except Exception:
                     break
             return
-
-
-    def generate_4room_dataset_by_clutter_and_spacing(
-        self,
-        out_root: str,
-        per_room_per_clutter_per_spacing: int = 100,  # 100 folders per room per clutter per spacing
-        env_path: str = "auto",
-        width: int = 1024,
-        height: int = 1024,
-        vfov: int = 60,
-        camera_height: float = 1.7,
-        clutter_steps_high: int = 3,
-        clutter_steps_low: int = 3,
-    ):
+    '''
+    def _apply_clutter_category(self, env: Environment, category: str, max_steps: int = 3):
         """
-        Output structure:
-        out_root/<RoomType>/<ClutterCategory>/<SpacingCategory>/<folder>/side_0..3.png + scene.json
+        Early-stopping clutter adjuster.
 
-        Per folder: 4 side images only (top disabled)
+        - high_clutter: repeatedly call _increase_clutter until instances stop increasing
+        - low_clutter: repeatedly call _decrease_clutter until hidden count stops increasing
+        - medium_clutter: do nothing
         """
-
-        import json
-        from hazalyser.helpers import get_current_scene_state, update_position_and_rotation
-
-        room_types = ["Bedroom", "LivingRoom", "Kitchen", "Bathroom"]
-        clutter_categories = ["high_clutter", "medium_clutter", "low_clutter"]
-        spacing_categories = ["low_spacing", "medium_spacing", "high_spacing"]
-
-        env = Environment(env_path=env_path)
+        category = category.lower().strip()
         action = Action()
 
-        try:
-            for rt in room_types:
-                self.scene_config.room_spec.spec.room_type = rt
+        if category == "medium_clutter":
+            return
 
-                for clutter_cat in clutter_categories:
-                    for spacing_cat in spacing_categories:
-                        for i in range(per_room_per_clutter_per_spacing):
+        if category == "high_clutter":
+            prev_n = -1
+            for _ in range(max_steps):
+                before_n = len(self._locked_scene_bundle.infos.get("instances", []))
+                if before_n <= prev_n:
+                    break
+                prev_n = before_n
 
-                            # --- spacing bin -> dims ---
-                            x_cells, z_cells = self._sample_dims_for_spacing_bin(spacing_cat)
-                            self.scene_config.dims = (x_cells, z_cells)
+                try:
+                    self._increase_clutter(env, action)
+                except Exception:
+                    break
 
-                            # --- new scene + lock ---
-                            self._new_scene(env)
-                            self._lock_scene(env, action)
+                after_n = len(self._locked_scene_bundle.infos.get("instances", []))
+                if after_n <= before_n:
+                    break
+            return
 
-                            # --- clutter category ---
-                            print("Applying clutter:", clutter_cat)
+        if category == "low_clutter":
+            prev_hidden = -1
+            for _ in range(max_steps):
+                before_hidden = len(getattr(self._locked_scene_bundle, "_hidden_object_indices", []))
+                if before_hidden <= prev_hidden:
+                    break
+                prev_hidden = before_hidden
 
-                            if clutter_cat == "high_clutter":
-                                self._apply_clutter_category(env, clutter_cat, steps=clutter_steps_high)
-                            elif clutter_cat == "low_clutter":
-                                self._apply_clutter_category(env, clutter_cat, steps=clutter_steps_low)
-                            else:
-                                self._apply_clutter_category(env, clutter_cat, steps=0)
+                try:
+                    self._decrease_clutter(env, action)
+                except Exception:
+                    break
 
-                            # --- save (4 sides only) into room/clutter/spacing ---
-                            folder_name = f"{rt}_{clutter_cat}_{spacing_cat}_{i:03d}_x{x_cells}_z{z_cells}"
-                            category_root = os.path.join(out_root, rt, clutter_cat, spacing_cat)
-
-                            save_folder, _ = self._save_perspectives(
-                                env,
-                                action=Action(),
-                                camera_height=camera_height,
-                                width=width,
-                                height=height,
-                                vertical_field_of_view=vfov,
-                                include_top=False,        # keep 4 images only
-                                out_root=category_root,   # saves into room/clutter/spacing
-                                folder_name=folder_name
-                            )
-
-                            # --- save scene.json ---
-                            current_state = get_current_scene_state(env, Action())
-                            update_position_and_rotation(self._locked_scene_bundle.infos, current_state)
-
-                            with open(os.path.join(save_folder, "scene.json"), "w", encoding="utf-8") as f:
-                                json.dump(self._locked_scene_bundle.infos, f, ensure_ascii=False, indent=2)
-
-                            # --- unlock ---
-                            self._unlock_scene(env, action)
-
-                            action.text = (
-                                f"Saved {rt}/{clutter_cat}/{spacing_cat} "
-                                f"[{i+1}/{per_room_per_clutter_per_spacing}] -> {save_folder}"
-                            )
-                            env.step(action)
-
-        finally:
-            env.close()
-
+                after_hidden = len(getattr(self._locked_scene_bundle, "_hidden_object_indices", []))
+                if after_hidden <= before_hidden:
+                    break
+            return
 
     '''
     def generate_4room_dataset(
@@ -1024,6 +982,167 @@ class Controller:
         finally:
             env.close()
     '''
+
+    def generate_4room_dataset_by_clutter_and_spacing(
+        self,
+        out_root: str,
+        per_room_per_clutter_per_spacing: int = 100,
+        env_path: str = "auto",
+        width: int = 1024,
+        height: int = 1024,
+        vfov: int = 60,
+        camera_height: float = 1.7,
+        clutter_steps_high: int = 3,
+        clutter_steps_low: int = 3,
+        batch_size: int = 25,   # NEW: restart env every N scenes
+        log_every: int = 1,     # NEW: print progress every N scenes
+    ):
+        """
+        Output:
+        out_root/<RoomType>/<ClutterCategory>/<SpacingCategory>/<folder>/
+            side_0..3.png
+            scene.json
+
+        Added:
+        - Batched generation (restart Environment every batch_size scenes)
+        - Early stopping (via _apply_clutter_category)
+        - Progress logs + ETA
+        - Prints current category directory (Bedroom/high_clutter/high_spacing etc.)
+        """
+
+        import json
+        import time
+        from hazalyser.helpers import get_current_scene_state, update_position_and_rotation
+
+        def fmt_time(seconds: float) -> str:
+            seconds = int(max(0, seconds))
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
+            if h > 0:
+                return f"{h}h {m}m {s}s"
+            if m > 0:
+                return f"{m}m {s}s"
+            return f"{s}s"
+
+        out_root_abs = os.path.abspath(out_root)
+        print("=== DATASET GENERATION START ===")
+        print("Working directory (cwd):", os.getcwd())
+        print("Output root:", out_root_abs)
+
+        room_types = ["Bedroom", "LivingRoom", "Kitchen", "Bathroom"]
+        clutter_categories = ["high_clutter", "medium_clutter", "low_clutter"]
+        spacing_categories = ["low_spacing", "medium_spacing", "high_spacing"]
+
+        total = (
+            len(room_types)
+            * len(clutter_categories)
+            * len(spacing_categories)
+            * per_room_per_clutter_per_spacing
+        )
+
+        done = 0
+        start_t = time.time()
+        ema_s = None  # exponential moving average seconds per scene
+
+        def restart_env(curr_env: Environment):
+            try:
+                curr_env.close()
+            except Exception:
+                pass
+            return Environment(env_path=env_path), Action()
+
+        env = Environment(env_path=env_path)
+        action = Action()
+
+        try:
+            for rt in room_types:
+                self.scene_config.room_spec.spec.room_type = rt
+
+                for clutter_cat in clutter_categories:
+                    for spacing_cat in spacing_categories:
+
+                        context_str = f"{rt} / {clutter_cat} / {spacing_cat}"
+                        category_root = os.path.join(out_root_abs, rt, clutter_cat, spacing_cat)
+                        os.makedirs(category_root, exist_ok=True)
+
+                        print("\n=== CATEGORY:", context_str, "===")
+                        print("Saving into:", category_root)
+
+                        for i in range(per_room_per_clutter_per_spacing):
+
+                            # Batch restart to avoid Unity/LEGENT hanging
+                            if done > 0 and (done % batch_size == 0):
+                                print(f"\n[BATCH RESTART] Completed {done}/{total}. Restarting LEGENT env...")
+                                env, action = restart_env(env)
+
+                            t0 = time.time()
+
+                            # --- spacing -> dims ---
+                            x_cells, z_cells = self._sample_dims_for_spacing_bin(spacing_cat)
+                            self.scene_config.dims = (x_cells, z_cells)
+
+                            # --- new scene + lock ---
+                            self._new_scene(env)
+                            self._lock_scene(env, action)
+
+                            # --- apply clutter (early stop inside) ---
+                            if clutter_cat == "high_clutter":
+                                self._apply_clutter_category(env, clutter_cat, max_steps=clutter_steps_high)
+                            elif clutter_cat == "low_clutter":
+                                self._apply_clutter_category(env, clutter_cat, max_steps=clutter_steps_low)
+                            else:
+                                self._apply_clutter_category(env, clutter_cat, max_steps=0)
+
+                            # --- save 4 side views (no top) ---
+                            folder_name = f"{rt}_{clutter_cat}_{spacing_cat}_{i:03d}_x{x_cells}_z{z_cells}"
+                            save_folder, _ = self._save_perspectives(
+                                env,
+                                action=Action(),
+                                camera_height=camera_height,
+                                width=width,
+                                height=height,
+                                vertical_field_of_view=vfov,
+                                include_top=False,
+                                out_root=category_root,   # already room/clutter/spacing
+                                folder_name=folder_name
+                            )
+
+                            # --- save scene.json ---
+                            current_state = get_current_scene_state(env, Action())
+                            update_position_and_rotation(self._locked_scene_bundle.infos, current_state)
+                            with open(os.path.join(save_folder, "scene.json"), "w", encoding="utf-8") as f:
+                                json.dump(self._locked_scene_bundle.infos, f, ensure_ascii=False, indent=2)
+
+                            # --- unlock ---
+                            self._unlock_scene(env, action)
+
+                            # --- ETA ---
+                            dt = time.time() - t0
+                            ema_s = dt if ema_s is None else (0.95 * ema_s + 0.05 * dt)
+
+                            done += 1
+                            elapsed = time.time() - start_t
+                            remaining = total - done
+                            eta = remaining * (ema_s if ema_s else 0.0)
+
+                            # --- logging ---
+                            if (done % log_every) == 0:
+                                print(
+                                    f"[{done}/{total}] {context_str} | "
+                                    f"sample={i+1}/{per_room_per_clutter_per_spacing} | "
+                                    f"dt={dt:.2f}s | elapsed={fmt_time(elapsed)} | ETA={fmt_time(eta)} | "
+                                    f"saved={save_folder}"
+                                )
+
+        finally:
+            try:
+                env.close()
+            except Exception:
+                pass
+            print("\n=== DATASET GENERATION END ===")
+
+
 
     def _fw_analyse(self, env: Environment, action: Action) -> None:
         # save all images for reference

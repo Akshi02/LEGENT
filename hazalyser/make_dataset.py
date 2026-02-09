@@ -14,4 +14,7 @@ if __name__ == "__main__":
         camera_height=1.7,
         clutter_steps_high=3,
         clutter_steps_low=3,
+        batch_size=10,
+        log_every=1,
     )
+
