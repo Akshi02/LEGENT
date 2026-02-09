@@ -983,6 +983,9 @@ class Controller:
             env.close()
     '''
 
+#------------- BACTH 1 CODE -----------#
+
+    '''
     def generate_4room_dataset_by_clutter_and_spacing(
         self,
         out_root: str,
@@ -1141,7 +1144,121 @@ class Controller:
             except Exception:
                 pass
             print("\n=== DATASET GENERATION END ===")
+    '''
 
+#------------- BATCH 2 CODE ----------------#
+
+    def generate_4room_dataset_by_clutter_and_spacing(
+        self,
+        out_root: str,
+        per_room_per_clutter_per_spacing: int = 100,  # 100 folders per room per clutter per spacing
+        env_path: str = "auto",
+        width: int = 1024,
+        height: int = 1024,
+        vfov: int = 60,
+        camera_height: float = 1.7,
+        clutter_steps_high: int = 3,
+        clutter_steps_low: int = 3,
+        batch_size: int = 25,      # optional (unused unless you add batching elsewhere)
+        log_every: int = 1,        # optional (unused unless you add richer logging elsewhere)
+        resume: bool = True,       # NEW: enable resume/skip
+    ):
+        """
+        Output structure:
+        out_root/<RoomType>/<ClutterCategory>/<SpacingCategory>/<folder>/side_0..3.png + scene.json
+
+        Per folder: 4 side images only (top disabled)
+
+        RESUME BEHAVIOR:
+        - If resume=True and a folder already exists AND contains side_0..3.png (and/or scene.json),
+            the sample is skipped and generation continues from the next missing one.
+        """
+
+        import json
+        import time
+        from hazalyser.helpers import get_current_scene_state, update_position_and_rotation
+
+        room_types = ["Bedroom", "LivingRoom", "Kitchen", "Bathroom"]
+        clutter_categories = ["high_clutter", "medium_clutter", "low_clutter"]
+        spacing_categories = ["low_spacing", "medium_spacing", "high_spacing"]
+
+        def _is_sample_done(folder: str) -> bool:
+            # strict: require all 4 side images
+            required = ["side_0.png", "side_1.png", "side_2.png", "side_3.png"]
+            return all(os.path.exists(os.path.join(folder, r)) for r in required)
+
+        env = Environment(env_path=env_path)
+        action = Action()
+
+        try:
+            for rt in room_types:
+                self.scene_config.room_spec.spec.room_type = rt
+
+                for clutter_cat in clutter_categories:
+                    for spacing_cat in spacing_categories:
+                        for i in range(per_room_per_clutter_per_spacing):
+
+                            # --- spacing bin -> dims ---
+                            x_cells, z_cells = self._sample_dims_for_spacing_bin(spacing_cat)
+                            self.scene_config.dims = (x_cells, z_cells)
+
+                            # --- folder naming ---
+                            folder_name = f"{rt}_{clutter_cat}_{spacing_cat}_{i:03d}_x{x_cells}_z{z_cells}"
+                            category_root = os.path.join(out_root, rt, clutter_cat, spacing_cat)
+                            save_folder = os.path.join(category_root, rt, folder_name)  # because _save_perspectives appends <room_type>/<folder_name>
+
+                            # --- RESUME: skip if already complete ---
+                            if resume and os.path.isdir(save_folder) and _is_sample_done(save_folder):
+                                print(f"[RESUME-SKIP] {rt}/{clutter_cat}/{spacing_cat} sample={i+1}/{per_room_per_clutter_per_spacing} -> {save_folder}")
+                                continue
+
+                            # --- new scene + lock ---
+                            self._new_scene(env)
+                            self._lock_scene(env, action)
+
+                            # --- clutter category ---
+                            print(f"Applying clutter: {rt}/{clutter_cat}/{spacing_cat} sample={i+1}/{per_room_per_clutter_per_spacing} (dims={x_cells}x{z_cells})")
+
+                            if clutter_cat == "high_clutter":
+                                self._apply_clutter_category(env, clutter_cat, steps=clutter_steps_high)
+                            elif clutter_cat == "low_clutter":
+                                self._apply_clutter_category(env, clutter_cat, steps=clutter_steps_low)
+                            else:
+                                self._apply_clutter_category(env, clutter_cat, steps=0)
+
+                            # --- save (4 sides only) into room/clutter/spacing ---
+                            # NOTE: out_root=category_root ensures directory layout:
+                            #   out_root/RoomType/Clutter/Spacing/<RoomType>/<folder_name>/side_*.png
+                            actual_save_folder, _ = self._save_perspectives(
+                                env,
+                                action=Action(),
+                                camera_height=camera_height,
+                                width=width,
+                                height=height,
+                                vertical_field_of_view=vfov,
+                                include_top=False,        # keep 4 images only
+                                out_root=category_root,   # saves into room/clutter/spacing
+                                folder_name=folder_name
+                            )
+
+                            # --- save scene.json ---
+                            current_state = get_current_scene_state(env, Action())
+                            update_position_and_rotation(self._locked_scene_bundle.infos, current_state)
+
+                            with open(os.path.join(actual_save_folder, "scene.json"), "w", encoding="utf-8") as f:
+                                json.dump(self._locked_scene_bundle.infos, f, ensure_ascii=False, indent=2)
+
+                            # --- unlock ---
+                            self._unlock_scene(env, action)
+
+                            action.text = (
+                                f"Saved {rt}/{clutter_cat}/{spacing_cat} "
+                                f"[{i+1}/{per_room_per_clutter_per_spacing}] -> {actual_save_folder}"
+                            )
+                            env.step(action)
+
+        finally:
+            env.close()
 
 
     def _fw_analyse(self, env: Environment, action: Action) -> None:
