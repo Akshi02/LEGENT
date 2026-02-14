@@ -803,15 +803,16 @@ class Controller:
 
         if spacing_bin == "low_spacing":
             # smallest rooms
-            x = random.randint(3, 4)
-            z = random.randint(3, 4)
+            x = random.randint(1, 2)
+            z = random.randint(1, 2)
             return (x, z)
 
         if spacing_bin == "medium_spacing":
-            x = random.randint(5, 7)
-            z = random.randint(5, 7)
+            x = random.randint(3, 4)
+            z = random.randint(3, 4) #old was (5,7)
             return (x, z)
 
+        '''
         if spacing_bin == "high_spacing":
             x = random.randint(8, 10)
             z = random.randint(8, 10)
@@ -819,7 +820,7 @@ class Controller:
 
         # fallback
         return (3, 3)
-    
+        '''
     '''
     def _apply_clutter_category(self, env: Environment, category: str, steps: int = 3):
         """
@@ -989,7 +990,7 @@ class Controller:
     def generate_4room_dataset_by_clutter_and_spacing(
         self,
         out_root: str,
-        per_room_per_clutter_per_spacing: int = 100,
+        per_room_per_clutter_per_spacing: int = 10, #number of folders
         env_path: str = "auto",
         width: int = 1024,
         height: int = 1024,
@@ -1035,7 +1036,8 @@ class Controller:
 
         room_types = ["Bedroom", "LivingRoom", "Kitchen", "Bathroom"]
         clutter_categories = ["high_clutter", "medium_clutter", "low_clutter"]
-        spacing_categories = ["low_spacing", "medium_spacing", "high_spacing"]
+        #spacing_categories = ["low_spacing", "medium_spacing", "high_spacing"]
+        spacing_categories = ["low_spacing", "medium_spacing"]
 
         total = (
             len(room_types)

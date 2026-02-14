@@ -7,7 +7,7 @@ if __name__ == "__main__":
 
     controller.generate_4room_dataset_by_clutter_and_spacing(
         out_root="dataset_by_room",
-        per_room_per_clutter_per_spacing=100,
+        per_room_per_clutter_per_spacing=10,
         width=1024,
         height=1024,
         vfov=60,
