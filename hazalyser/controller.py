@@ -803,13 +803,13 @@ class Controller:
 
         if spacing_bin == "low_spacing":
             # smallest rooms
-            x = random.randint(1, 2)
-            z = random.randint(1, 2)
+            x = random.randint(3, 4)
+            z = random.randint(3, 4)
             return (x, z)
 
         if spacing_bin == "medium_spacing":
-            x = random.randint(3, 4)
-            z = random.randint(3, 4) #old was (5,7)
+            x = random.randint(4, 5)
+            z = random.randint(4, 5) #old was (5,7)
             return (x, z)
 
         '''
