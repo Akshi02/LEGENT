@@ -868,7 +868,7 @@ class Controller:
 
         if category == "high_clutter":
             prev_n = -1
-            for _ in range(max_steps):
+            for _ in range(5):
                 before_n = len(self._locked_scene_bundle.infos.get("instances", []))
                 if before_n <= prev_n:
                     break
@@ -996,7 +996,7 @@ class Controller:
         height: int = 1024,
         vfov: int = 60,
         camera_height: float = 1.7,
-        clutter_steps_high: int = 3,
+        clutter_steps_high: int = 5,
         clutter_steps_low: int = 3,
         batch_size: int = 25,   # NEW: restart env every N scenes
         log_every: int = 1,     # NEW: print progress every N scenes
