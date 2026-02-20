@@ -866,6 +866,7 @@ class Controller:
         if category == "medium_clutter":
             return
 
+        '''
         if category == "high_clutter":
             prev_n = -1
             for _ in range(5):
@@ -883,7 +884,28 @@ class Controller:
                 if after_n <= before_n:
                     break
             return
+        '''
 
+        if category == "high_clutter":
+            # Keep increasing clutter until the number of instances stops increasing
+            # (i.e., room saturated or placement fails)
+            for _ in range(25):
+                before_n = len(self._locked_scene_bundle.infos.get("instances", []))
+
+                try:
+                    self._increase_clutter(env, action)
+                except Exception:
+                    break
+
+                after_n = len(self._locked_scene_bundle.infos.get("instances", []))
+
+                # Stop when nothing new is actually added
+                if after_n <= before_n:
+                    break
+
+            return
+
+            
         if category == "low_clutter":
             prev_hidden = -1
             for _ in range(max_steps):
@@ -996,7 +1018,7 @@ class Controller:
         height: int = 1024,
         vfov: int = 60,
         camera_height: float = 1.7,
-        clutter_steps_high: int = 5,
+        clutter_steps_high: int = 25,
         clutter_steps_low: int = 3,
         batch_size: int = 25,   # NEW: restart env every N scenes
         log_every: int = 1,     # NEW: print progress every N scenes

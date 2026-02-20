@@ -12,7 +12,7 @@ if __name__ == "__main__":
         height=1024,
         vfov=60,
         camera_height=1.7,
-        clutter_steps_high=5,
+        clutter_steps_high=25,
         clutter_steps_low=3,
         batch_size=10,
         log_every=1,
