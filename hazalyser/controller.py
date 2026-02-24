@@ -825,11 +825,11 @@ class Controller:
     
     def _apply_clutter_category(self, env: Environment, category: str, max_steps: int = 3):
         """
-        Clutter levels based on SMALL OBJECTS only:
+        Clutter levels based on SMALL OBJECTS only (with floor-clutter injection):
 
-        - high_clutter   → saturate small objects
-        - medium_clutter → +5% small objects over baseline
-        - low_clutter    → -15% small objects from baseline
+        - high_clutter   → saturate small objects (multiple passes) + spill many to floor
+        - medium_clutter → +5% small objects over baseline + spill a few to floor
+        - low_clutter    → remove ~10% of small objects (affects both surface + floor)
         """
 
         category = (category or "").lower().strip()
@@ -848,43 +848,108 @@ class Controller:
         floor_prefabs = set(structural_assets.get("floor", []))
         walls_and_floors = wall_prefabs | floor_prefabs
 
-        subject = self.scene_config.subject
+        subject = self.scene_config.subject  # can be None
 
         def is_struct(inst):
             return inst.get("prefab") in walls_and_floors
+
+        def safe_is_subject(inst) -> bool:
+            # helpers.is_subject() crashes if subject is None, so guard here
+            if not subject:
+                return False
+            try:
+                return is_subject(inst, subject)
+            except Exception:
+                return False
 
         def is_valid_small(inst):
             return (
                 is_small_object_instance(inst)
                 and not is_struct(inst)
-                and not is_subject(inst, subject)
+                and not safe_is_subject(inst)
             )
 
+        def small_key(inst):
+            # used to dedupe "new_small" against existing small objects
+            pos = inst.get("position", [0, 0, 0])
+            return (
+                inst.get("prefab", ""),
+                round(float(pos[0]), 2),
+                round(float(pos[1]), 2),
+                round(float(pos[2]), 2),
+            )
+
+        def clamp(v, lo, hi):
+            return max(lo, min(hi, v))
+
+        def spill_to_floor(inst_list, spill_ratio=0.35, max_spill=None, jitter=0.75):
+            """
+            Move a portion of NEWLY ADDED small objects from surfaces to the floor.
+            This creates floor clutter / trip hazards while keeping object realism.
+            """
+            if not inst_list:
+                return 0
+
+            # bbox limits
+            min_x, min_z, max_x, max_z = gen.placer.bbox
+
+            n = max(1, int(round(spill_ratio * len(inst_list))))
+            if max_spill is not None:
+                n = min(n, int(max_spill))
+
+            random.shuffle(inst_list)
+            chosen = inst_list[:n]
+
+            moved = 0
+            for inst in chosen:
+                pos = inst.get("position", [0, 0, 0])
+                x, _, z = pos[0], pos[1], pos[2]
+
+                # random offset around current location
+                dx = random.uniform(-jitter, jitter)
+                dz = random.uniform(-jitter, jitter)
+
+                # place on floor (epsilon above to avoid z-fighting)
+                nx = clamp(x + dx, min_x + 0.25, max_x - 0.25)
+                nz = clamp(z + dz, min_z + 0.25, max_z - 0.25)
+                inst["position"] = [nx, 0.02, nz]
+
+                # detach from receptacle/parent if fields exist
+                if "parent" in inst:
+                    inst["parent"] = -1
+                if "on_what" in inst:
+                    inst["on_what"] = -1
+                if "onWhat" in inst:
+                    inst["onWhat"] = -1
+
+                moved += 1
+
+            return moved
+
+        # Helper: furniture list for add_small_objects (exclude structure, small, subject, agent)
+        def get_furniture():
+            return [
+                inst for inst in instances
+                if (not is_struct(inst))
+                and (not is_small_object_instance(inst))
+                and (not safe_is_subject(inst))
+                and (inst.get("type") != "agent")
+            ]
+
         # --------------------------------------------------
-        # HIGH CLUTTER → Saturate small objects
+        # HIGH CLUTTER → Saturate small objects (multiple passes)
         # --------------------------------------------------
         if category == "high_clutter":
-
-            def small_key(inst):
-                pos = inst.get("position", [0, 0, 0])
-                return (inst.get("prefab", ""), round(pos[0], 2), round(pos[1], 2), round(pos[2], 2))
-
-            max_passes = max(1, int(max_steps))
+            max_passes = max(1, int(max_steps))  # max_steps passed from generate_* as clutter_steps_high
 
             for _ in range(max_passes):
-
-                furniture = [
-                    inst for inst in instances
-                    if (not is_struct(inst))
-                    and (not is_small_object_instance(inst))
-                    and (not is_subject(inst, subject))
-                    and (inst.get("type") != "agent")
-                ]
+                furniture = get_furniture()
 
                 before_small = sum(1 for inst in instances if is_valid_small(inst))
                 existing_small = {small_key(inst) for inst in instances if is_valid_small(inst)}
 
                 try:
+                    # 999 here means "try to add a lot" in your codebase usage
                     new_small = add_small_objects(
                         furniture,
                         odb,
@@ -898,34 +963,38 @@ class Controller:
                 except Exception:
                     new_small = []
 
+                # only keep uniques vs existing
                 new_small_unique = [inst for inst in new_small if small_key(inst) not in existing_small]
 
                 if new_small_unique:
                     instances.extend(new_small_unique)
+
+                    # NEW: spill many of the new small objects to the floor for trip hazards
+                    spill_to_floor(
+                        new_small_unique,
+                        spill_ratio=0.45,  # more floor clutter for high clutter
+                        max_spill=30,      # cap to reduce freeze risk
+                        jitter=0.90
+                    )
+
                     env.reset(ResetInfo(scene=infos))
                     env.step(action)
 
                 after_small = sum(1 for inst in instances if is_valid_small(inst))
+                # stop if no growth (saturated / placement failed)
                 if after_small <= before_small:
                     break
 
             return
 
         # --------------------------------------------------
-        # MEDIUM CLUTTER → +5% small objects
+        # MEDIUM CLUTTER → +5% small objects + small floor spill
         # --------------------------------------------------
         if category == "medium_clutter":
-
-            furniture = [
-                inst for inst in instances
-                if (not is_struct(inst))
-                and (not is_small_object_instance(inst))
-                and (not is_subject(inst, subject))
-                and (inst.get("type") != "agent")
-            ]
+            furniture = get_furniture()
 
             baseline_small = sum(1 for inst in instances if is_valid_small(inst))
-            target_extra = max(1, int(round(0.05 * baseline_small)))
+            target_extra = max(1, int(round(0.05 * baseline_small)))  # +5%
 
             try:
                 new_small = add_small_objects(
@@ -943,21 +1012,29 @@ class Controller:
 
             if new_small:
                 instances.extend(new_small)
+
+                # NEW: light floor clutter for medium clutter
+                spill_to_floor(
+                    new_small,
+                    spill_ratio=0.15,
+                    max_spill=8,
+                    jitter=0.70
+                )
+
                 env.reset(ResetInfo(scene=infos))
                 env.step(action)
 
             return
 
         # --------------------------------------------------
-        # LOW CLUTTER → -10% small objects
+        # LOW CLUTTER → remove ~10% of small objects (surface + floor)
         # --------------------------------------------------
         if category == "low_clutter":
-
             small_idxs = [i for i, inst in enumerate(instances) if is_valid_small(inst)]
             if not small_idxs:
                 return
 
-            remove_ratio = 0.10
+            remove_ratio = 0.10  # -10%
             remove_n = max(1, int(round(remove_ratio * len(small_idxs))))
 
             random.shuffle(small_idxs)
@@ -970,8 +1047,10 @@ class Controller:
 
             env.reset(ResetInfo(scene=infos))
             env.step(action)
-
             return
+
+        # Unknown category → do nothing
+        return
     
     '''
     def _apply_clutter_category(self, env: Environment, category: str, steps: int = 3):
