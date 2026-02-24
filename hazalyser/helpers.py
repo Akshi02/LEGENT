@@ -79,10 +79,17 @@ def is_structural(odb, inst: Dict[str, Any]) -> bool:
 def is_small_object_instance(inst: Dict[str, Any]) -> bool:
     # Heuristic: small objects are interactables whose parent is a receptacle or have parent not -1
     return inst["type"] == "interactable"
-        
+
+'''        
 def is_subject(inst: Dict[str, Any], subject: str) -> bool:
     return inst["prefab"] == os.path.join(SUBJECT_PATH, subject)
-
+'''
+def is_subject(inst: Dict[str, Any], subject: str) -> bool:
+    # If no subject configured, nothing should be treated as the subject.
+    if not subject:
+        return False
+    return inst.get("prefab") == os.path.join(SUBJECT_PATH, subject)
+   
 def matches(odb, inst: Dict[str, Any], name: str) -> bool:
     key = name.lower()
     if inst["prefab"].lower() == key:
