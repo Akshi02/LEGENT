@@ -791,7 +791,7 @@ class Controller:
         return save_folder, image_paths
     '''
 
-    #NEW CODES
+    #NEW CODES --------------------------------------------------------------------------
 
     def _sample_dims_for_spacing_bin(self, spacing_bin: str):
         """
@@ -820,7 +820,159 @@ class Controller:
 
         # fallback
         return (3, 3)
+      
         '''
+    
+    def _apply_clutter_category(self, env: Environment, category: str, max_steps: int = 3):
+        """
+        Clutter levels based on SMALL OBJECTS only:
+
+        - high_clutter   → saturate small objects
+        - medium_clutter → +5% small objects over baseline
+        - low_clutter    → -15% small objects from baseline
+        """
+
+        category = (category or "").lower().strip()
+        action = Action()
+
+        if not self._locked_scene_bundle:
+            return
+
+        gen = self._locked_scene_bundle.generator
+        odb = gen.odb
+        infos = self._locked_scene_bundle.infos
+        instances = infos.get("instances", [])
+
+        structural_assets = odb.MY_OBJECTS
+        wall_prefabs = set(structural_assets.get("wall", []))
+        floor_prefabs = set(structural_assets.get("floor", []))
+        walls_and_floors = wall_prefabs | floor_prefabs
+
+        subject = self.scene_config.subject
+
+        def is_struct(inst):
+            return inst.get("prefab") in walls_and_floors
+
+        def is_valid_small(inst):
+            return (
+                is_small_object_instance(inst)
+                and not is_struct(inst)
+                and not is_subject(inst, subject)
+            )
+
+        # --------------------------------------------------
+        # HIGH CLUTTER → Saturate small objects
+        # --------------------------------------------------
+        if category == "high_clutter":
+
+            def small_key(inst):
+                pos = inst.get("position", [0, 0, 0])
+                return (inst.get("prefab", ""), round(pos[0], 2), round(pos[1], 2), round(pos[2], 2))
+
+            max_passes = max(1, int(max_steps))
+
+            for _ in range(max_passes):
+
+                furniture = [
+                    inst for inst in instances
+                    if (not is_struct(inst))
+                    and (not is_small_object_instance(inst))
+                    and (not is_subject(inst, subject))
+                    and (inst.get("type") != "agent")
+                ]
+
+                before_small = sum(1 for inst in instances if is_valid_small(inst))
+                existing_small = {small_key(inst) for inst in instances if is_valid_small(inst)}
+
+                try:
+                    new_small = add_small_objects(
+                        furniture,
+                        odb,
+                        gen.rooms,
+                        999,
+                        gen.placer.bbox,
+                        object_counts={},
+                        specified_object_instances={},
+                        receptacle_object_counts={},
+                    )
+                except Exception:
+                    new_small = []
+
+                new_small_unique = [inst for inst in new_small if small_key(inst) not in existing_small]
+
+                if new_small_unique:
+                    instances.extend(new_small_unique)
+                    env.reset(ResetInfo(scene=infos))
+                    env.step(action)
+
+                after_small = sum(1 for inst in instances if is_valid_small(inst))
+                if after_small <= before_small:
+                    break
+
+            return
+
+        # --------------------------------------------------
+        # MEDIUM CLUTTER → +5% small objects
+        # --------------------------------------------------
+        if category == "medium_clutter":
+
+            furniture = [
+                inst for inst in instances
+                if (not is_struct(inst))
+                and (not is_small_object_instance(inst))
+                and (not is_subject(inst, subject))
+                and (inst.get("type") != "agent")
+            ]
+
+            baseline_small = sum(1 for inst in instances if is_valid_small(inst))
+            target_extra = max(1, int(round(0.05 * baseline_small)))
+
+            try:
+                new_small = add_small_objects(
+                    furniture,
+                    odb,
+                    gen.rooms,
+                    target_extra,
+                    gen.placer.bbox,
+                    object_counts={},
+                    specified_object_instances={},
+                    receptacle_object_counts={},
+                )
+            except Exception:
+                new_small = []
+
+            if new_small:
+                instances.extend(new_small)
+                env.reset(ResetInfo(scene=infos))
+                env.step(action)
+
+            return
+
+        # --------------------------------------------------
+        # LOW CLUTTER → -10% small objects
+        # --------------------------------------------------
+        if category == "low_clutter":
+
+            small_idxs = [i for i, inst in enumerate(instances) if is_valid_small(inst)]
+            if not small_idxs:
+                return
+
+            remove_ratio = 0.10
+            remove_n = max(1, int(round(remove_ratio * len(small_idxs))))
+
+            random.shuffle(small_idxs)
+            to_remove = set(small_idxs[:remove_n])
+
+            infos["instances"] = [
+                inst for j, inst in enumerate(instances)
+                if j not in to_remove
+            ]
+
+            env.reset(ResetInfo(scene=infos))
+            env.step(action)
+
+            return
+    
     '''
     def _apply_clutter_category(self, env: Environment, category: str, steps: int = 3):
         """
@@ -852,6 +1004,9 @@ class Controller:
                     break
             return
     '''
+
+
+    '''
     def _apply_clutter_category(self, env: Environment, category: str, max_steps: int = 3):
         """
         Early-stopping clutter adjuster.
@@ -866,7 +1021,8 @@ class Controller:
         if category == "medium_clutter":
             return
 
-        '''
+        
+        
         if category == "high_clutter":
             prev_n = -1
             for _ in range(5):
@@ -884,7 +1040,7 @@ class Controller:
                 if after_n <= before_n:
                     break
             return
-        '''
+
 
         if category == "high_clutter":
             # Keep increasing clutter until the number of instances stops increasing
@@ -924,6 +1080,8 @@ class Controller:
                     break
             return
 
+    '''
+            
     '''
     def generate_4room_dataset(
         self,
@@ -1018,7 +1176,7 @@ class Controller:
         height: int = 1024,
         vfov: int = 60,
         camera_height: float = 1.7,
-        clutter_steps_high: int = 25,
+        clutter_steps_high: int = 8,
         clutter_steps_low: int = 3,
         batch_size: int = 25,   # NEW: restart env every N scenes
         log_every: int = 1,     # NEW: print progress every N scenes
