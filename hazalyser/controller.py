@@ -791,7 +791,6 @@ class Controller:
         return save_folder, image_paths
     '''
 
-    #NEW CODES --------------------------------------------------------------------------
 
     def _sample_dims_for_spacing_bin(self, spacing_bin: str):
         """
@@ -936,8 +935,7 @@ class Controller:
                 and (inst.get("type") != "agent")
             ]
 
-        # --------------------------------------------------
-        # HIGH CLUTTER → Saturate small objects (multiple passes)
+        # HIGH CLUTTER  Saturate small objects (multiple passes)
         # --------------------------------------------------
         if category == "high_clutter":
             max_passes = max(1, int(max_steps))  # max_steps passed from generate_* as clutter_steps_high
@@ -949,7 +947,7 @@ class Controller:
                 existing_small = {small_key(inst) for inst in instances if is_valid_small(inst)}
 
                 try:
-                    # 999 here means "try to add a lot" in your codebase usage
+                    # 999 here means "try to add a lot" in codebase usage
                     new_small = add_small_objects(
                         furniture,
                         odb,
@@ -987,8 +985,8 @@ class Controller:
 
             return
 
-        # --------------------------------------------------
-        # MEDIUM CLUTTER → +5% small objects + small floor spill
+       
+        # MEDIUM CLUTTER  +5% small objects + small floor spill
         # --------------------------------------------------
         if category == "medium_clutter":
             furniture = get_furniture()
@@ -1026,8 +1024,8 @@ class Controller:
 
             return
 
-        # --------------------------------------------------
-        # LOW CLUTTER → remove ~10% of small objects (surface + floor)
+        
+        # LOW CLUTTER  remove 10% of small objects (surface + floor)
         # --------------------------------------------------
         if category == "low_clutter":
             small_idxs = [i for i, inst in enumerate(instances) if is_valid_small(inst)]
@@ -1049,7 +1047,7 @@ class Controller:
             env.step(action)
             return
 
-        # Unknown category → do nothing
+        # Unknown category do nothing
         return
     
     '''
