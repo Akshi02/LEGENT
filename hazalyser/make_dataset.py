@@ -2,7 +2,7 @@ from hazalyser import Controller, SceneConfig
 
 if __name__ == "__main__":
     cfg = SceneConfig()
-    cfg.images = "all"  # doesn't matter because we're disabling top in _save_perspectives
+    cfg.images = "all"  # doesn't matter because disabling top in _save_perspectives
     controller = Controller(scene_config=cfg)
 
     controller.generate_4room_dataset_by_clutter_and_spacing(
